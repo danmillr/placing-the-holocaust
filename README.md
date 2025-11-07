@@ -76,7 +76,7 @@ Set the following env vars (e.g., in Vercel project settings):
 - `WEAVIATE_API_KEY`
 - `CORS_ALLOW_ORIGIN` (optional)
 
-Client-side code always calls `POST /api/weaviate` with `{ "query": "<GraphQL>" }`.
+Client-side code always calls `POST /api/weaviate` (see `api/weaviate.js`) with `{ "query": "<GraphQL>" }`.
 
 Test via curl:
 
