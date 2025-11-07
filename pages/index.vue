@@ -4,7 +4,7 @@
   <div class="landing">
     <div class="row">
       <div class="column">
-        <h1>Placing the Holocaust</h1>
+        <h1>Why did places matter in the Holocaust?</h1>
         <p>The Holocaust was not limited to iconic places like Auschwitz and the Warsaw ghetto. It transformed
         ordinary places – city streets, public squares, farm fields, forests. The Nazi regime and their
         collaborators created thousands of places where civilians were confined, tortured, exploited, and killed.
