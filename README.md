@@ -67,3 +67,21 @@ More information about the usage of this directory in [the documentation](https:
 This directory contains your Vuex store files. Creating a file in this directory automatically activates Vuex.
 
 More information about the usage of this directory in [the documentation](https://nuxtjs.org/docs/2.x/directory-structure/store).
+
+## Weaviate proxy & environment variables
+
+Set the following env vars (e.g., in Vercel project settings):
+
+- `WEAVIATE_URL`
+- `WEAVIATE_API_KEY`
+- `CORS_ALLOW_ORIGIN` (optional)
+
+Client-side code always calls `POST /api/weaviate` with `{ "query": "<GraphQL>" }`.
+
+Test via curl:
+
+```bash
+curl -s -X POST https://<your-domain>/api/weaviate \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ Aggregate { HolocaustTestimonies { meta { count } } } }"}'
+```

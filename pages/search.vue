@@ -23,6 +23,18 @@
     <main class="content-area">
       <h1 class="page-heading">Search Transcripts</h1>
 
+      <div class="test-controls">
+        <button type="button" @click="runAggregateTest">Run Count Test</button>
+        <div class="rg-test">
+          <input
+            v-model="testRg"
+            type="text"
+            placeholder="Enter RG for sample test"
+          />
+          <button type="button" @click="runSampleRGTest">Run RG Test</button>
+        </div>
+      </div>
+
       <div v-if="results.length" class="results-list">
         <h2 class="results-count">Results ({{ results.length }})</h2>
         <div v-for="(row, idx) in results" :key="idx" class="result-card">
@@ -33,10 +45,13 @@
           <div class="card-body">
             <div class="card-row"><span class="label">Birth Year:</span> {{ row.birth_year }}</div>
             <div class="card-row"><span class="label">Gender:</span> {{ row.gender }}</div>
-            <div class="card-row"><span class="label">Country:</span> {{ row.country }}</div>
+            <div class="card-row"><span class="label">Country:</span> {{ row.birth_country }}</div>
             <div class="card-row"><span class="label">Experience Group:</span> {{ row.experience_group }}</div>
             <div class="card-row"><span class="label">Score:</span> {{ row.score }}</div>
             <p class="excerpt">{{ row.text }}</p>
+          </div>
+          <div class="card-actions">
+            <NuxtLink :to="makeTranscriptLink(row)">Open in transcript</NuxtLink>
           </div>
         </div>
       </div>
@@ -51,6 +66,8 @@
 <script>
 import SearchForm from '@/components/SearchForm.vue'
 
+const escQuotes = (s) => (s || '').toString().replace(/"/g, '\\"');
+
 export default {
   name: "SearchPage",
   components: { SearchForm },
@@ -64,18 +81,19 @@ export default {
       countries: [],
       experienceGroups: [],
       birthYears: [],
+      testRg: '',
 
       // UI label -> Weaviate property mapping
       placeLabelMap: {
-        "Regions": "REGION",
-        "Countries": "COUNTRY",
-        "Populated Places": "POPULATED_PLACE",
-        "Environmental Features": "ENV_FEATURES",
-        "Distinct Landscape Features": "DLF",
-        "Buildings": "BUILDING",
-        "Interior Spaces": "INT_SPACE",
-        "Spatial Objects": "SPATIAL_OBJECT",
-        "Imaginary Places": "NPIP"
+        "Regions": "region",
+        "Countries": "country",
+        "Populated Places": "populated_place",
+        "Environmental Features": "env_features",
+        "Distinct Landscape Features": "dlf",
+        "Buildings": "building",
+        "Interior Spaces": "int_space",
+        "Spatial Objects": "spatial_obj",
+        "Imaginary Places": "npip"
       },
 
       placeLabelOptions: [
@@ -109,12 +127,10 @@ export default {
       this.genders = [...new Set(rawGenders.map(g => (g ?? '').toString().trim()))].filter(Boolean);
 
       const trimmedCountries = rawCountries.map(c => (c ?? '').toString().trim()).filter(Boolean);
-      this.countries = [...new Set(trimmedCountries)]; // de-dupe (e.g., "Czechoslovakia ")
+      this.countries = [...new Set(trimmedCountries)];
 
-      // Keep strings (comma-joined options) as-is for the form; where-clause will split properly
       this.experienceGroups = [...new Set(rawExperience.map(e => (e ?? '').toString().trim()))].filter(Boolean);
 
-      // Years as numbers; de-dupe; sort ascending
       const yearsNum = rawYears
         .map(y => Number(y))
         .filter(y => Number.isFinite(y))
@@ -138,7 +154,6 @@ export default {
       }
     },
 
-    // Real embedding via the HF Space you provided
     async generateEmbedding(text) {
       const t = (text || '').trim();
       if (!t) return null;
@@ -162,7 +177,6 @@ export default {
           console.warn('Unexpected embedding payload:', data);
           return null;
         }
-        // Normalize (optional)
         const norm = Math.sqrt(vec.reduce((s, v) => s + v*v, 0)) || 1;
         return vec.map(v => v / norm);
       } catch (e) {
@@ -173,31 +187,18 @@ export default {
 
     async doWeaviateQuery(formData) {
       const queryText = (formData.queryText || '').trim();
-
-      // Only embed if queryType uses vectors AND there's text
       const wantsVector = (formData.queryType === 'Vector' || formData.queryType === 'Hybrid');
       const queryVector = wantsVector && queryText ? await this.generateEmbedding(queryText) : null;
 
       const gqlQuery = this.buildGraphQLQuery(formData, queryVector);
-
-      const WEAVIATE_URL = 'http://acg-floating-204-197-5-43.acg.maine.edu:8080/v1/graphql';
-      const WEAVIATE_API_KEY = 'wNIf2XunX2THHTK6y1aDEr0lyj0FFv4x6KqT';
-
       try {
-        const resp = await fetch(WEAVIATE_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${WEAVIATE_API_KEY}`
-          },
-          body: JSON.stringify({ query: gqlQuery })
-        });
-        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
-        const json = await resp.json();
+        const json = await this.postWeaviate(gqlQuery);
         const testimonies = json.data?.Get?.HolocaustTestimonies || [];
         return testimonies.map(t => {
           if (t._additional?.distance != null) {
-            t.score = parseFloat((1 - t._additional.distance).toFixed(3));
+            t.score = Number((1 - t._additional.distance).toFixed(3));
+          } else {
+            t.score = null;
           }
           return t;
         });
@@ -209,31 +210,36 @@ export default {
 
     buildGraphQLQuery(formData, queryVector) {
       const whereClause = this.buildWhereClause(formData);
-
-      // Include nearVector only when we actually have a vector
-      const nearVectorClause = (queryVector && queryVector.length)
-        ? `nearVector: { vector: [${queryVector.join(',')}] }`
-        : '';
-
-      // (Optional) If you later add BM25/hybrid, wire here.
-      // For now we stick to vector + filters (or just filters).
       const limit = Number(formData.numResults) || 100;
+      const args = [`limit: ${limit}`];
+      if (whereClause) args.push(whereClause);
+
+      const queryText = (formData.queryText || '').trim();
+      const escaped = escQuotes(queryText);
+      const vectorReady = Array.isArray(queryVector) && queryVector.length;
+
+      if (formData.queryType === 'Keyword' && escaped) {
+        args.push(`bm25: { query: "${escaped}" }`);
+      } else if (formData.queryType === 'Hybrid' && escaped && vectorReady) {
+        args.push(`hybrid: { query: "${escaped}", vector: [${queryVector.join(',')}], alpha: 0.5 }`);
+      } else if (vectorReady) {
+        args.push(`nearVector: { vector: [${queryVector.join(',')}] }`);
+      }
 
       return `{
         Get {
           HolocaustTestimonies(
-            limit: ${limit},
-            ${nearVectorClause}
-            ${whereClause}
+            ${args.join(',\n            ')}
           ) {
             rg
             full_name
             birth_year
+            birth_country
             gender
-            country
             experience_group
+            sentence_ids
             text
-            _additional { distance }
+            _additional { id distance }
           }
         }
       }`;
@@ -244,67 +250,131 @@ export default {
       const trimOrEmpty = (s) => (s ?? '').toString().trim();
       const isNonEmpty = (s) => trimOrEmpty(s).length > 0;
 
-      // Respect toggles (only apply when sections are enabled)
       const useTestimony = !!filters.testimonyFilters;
       const usePlaces = !!filters.placesHeader;
 
-      // Testimony filters
       if (useTestimony) {
+        if (Array.isArray(filters.category) && filters.category.length) {
+          const catOps = filters.category
+            .map(c => trimOrEmpty(c))
+            .filter(Boolean)
+            .map(c => `{ operator: Equal, path: ["category"], valueText: "${escQuotes(c)}" }`);
+          if (catOps.length === 1) ops.push(catOps[0]);
+          else if (catOps.length) ops.push(`{ operator: Or, operands: [${catOps.join(',')}] }`);
+        }
+
         if (isNonEmpty(filters.gender)) {
-          ops.push(`{ operator: Equal, path: ["gender"], valueText: "${trimOrEmpty(filters.gender)}" }`);
+          ops.push(`{ operator: Equal, path: ["gender"], valueText: "${escQuotes(filters.gender)}" }`);
         }
 
         if (isNonEmpty(filters.country)) {
-          ops.push(`{ operator: Equal, path: ["country"], valueText: "${trimOrEmpty(filters.country)}" }`);
+          ops.push(`{ operator: Equal, path: ["birth_country"], valueText: "${escQuotes(filters.country)}" }`);
         }
 
         if (isNonEmpty(filters.experienceGroup)) {
-          const parts = trimOrEmpty(filters.experienceGroup)
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean);
-
-          if (parts.length > 1) {
-            const arr = parts.map(p => `"${p}"`).join(',');
-            ops.push(`{ operator: ContainsAll, path: ["experience_group"], valueStringArray: [${arr}] }`);
-          } else {
-            ops.push(`{ operator: Equal, path: ["experience_group"], valueText: "${parts[0]}" }`);
-          }
+          ops.push(`{ operator: Equal, path: ["experience_group"], valueText: "${escQuotes(filters.experienceGroup)}" }`);
         }
 
         if (isNonEmpty(filters.birthYear)) {
           const by = Number(filters.birthYear);
           if (Number.isFinite(by)) {
-            // valueNumber works for int/number schemas
-            ops.push(`{ operator: Equal, path: ["birth_year"], valueNumber: ${by} }`);
+            ops.push(`{ operator: Equal, path: ["birth_year"], valueInt: ${by} }`);
           }
         }
 
         if (isNonEmpty(filters.rgNumber)) {
-          ops.push(`{ operator: Equal, path: ["rg"], valueText: "${trimOrEmpty(filters.rgNumber)}" }`);
+          ops.push(`{ operator: Equal, path: ["rg"], valueText: "${escQuotes(filters.rgNumber)}" }`);
         }
 
         if (isNonEmpty(filters.fullName)) {
-          // Exact match; switch to Like for prefix contains if desired
-          ops.push(`{ operator: Equal, path: ["full_name"], valueText: "${trimOrEmpty(filters.fullName)}" }`);
+          const name = escQuotes(filters.fullName);
+          ops.push(`{ operator: Like, path: ["full_name"], valueText: "*${name}*" }`);
         }
       }
 
-      // Place categories (OR block), only if enabled
       if (usePlaces && Array.isArray(filters.labels) && filters.labels.length) {
         const orOps = filters.labels
           .map(lbl => this.placeLabelMap[lbl])
           .filter(Boolean)
           .map(prop => `{ operator: GreaterThan, path: ["${prop}"], valueNumber: 0 }`);
-          // If these are booleans in your schema, use:
-          // .map(prop => `{ operator: Equal, path: ["${prop}"], valueBoolean: true }`);
 
-        if (orOps.length) {
-          ops.push(`{ operator: Or, operands: [${orOps.join(',')}] }`);
-        }
+        if (orOps.length === 1) ops.push(orOps[0]);
+        else if (orOps.length) ops.push(`{ operator: Or, operands: [${orOps.join(',')}] }`);
       }
 
       return ops.length ? `where: { operator: And, operands: [${ops.join(',')}] }` : '';
+    },
+
+    makeTranscriptLink(row) {
+      const rg = encodeURIComponent(row?.rg || '');
+      const sid = encodeURIComponent((row?.sentence_ids && row.sentence_ids[0]) || '');
+      return `/transcripts/${rg}?sent=${sid}`;
+    },
+
+    async postWeaviate(query) {
+      const resp = await fetch('/api/weaviate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      });
+      if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+      return resp.json();
+    },
+
+    async runAggregateTest() {
+      const query = `{ Aggregate { HolocaustTestimonies { meta { count } } } }`;
+      try {
+        const json = await this.postWeaviate(query);
+        console.log('Aggregate test result:', json);
+      } catch (err) {
+        console.error('Aggregate test failed:', err);
+      }
+    },
+
+    async runSampleRGTest() {
+      const trimmed = (this.testRg || '').trim();
+      if (!trimmed) {
+        console.warn('Provide an RG value for the test.');
+        return;
+      }
+      const query = `{
+        Get {
+          HolocaustTestimonies(
+            limit: 5,
+            where: {
+              operator: Equal,
+              path: ["rg"],
+              valueText: "${escQuotes(trimmed)}"
+            }
+          ) {
+            rg
+            full_name
+            birth_year
+            birth_country
+            gender
+            experience_group
+            sentence_ids
+            text
+            _additional { id distance }
+          }
+        }
+      }`;
+      try {
+        const json = await this.postWeaviate(query);
+        const testimonies = json.data?.Get?.HolocaustTestimonies || [];
+        this.results = testimonies.map(t => {
+          if (t._additional?.distance != null) {
+            t.score = Number((1 - t._additional.distance).toFixed(3));
+          } else {
+            t.score = null;
+          }
+          return t;
+        });
+        this.searched = true;
+        console.log('RG test result:', testimonies);
+      } catch (err) {
+        console.error('RG test failed:', err);
+      }
     }
   }
 }
@@ -341,6 +411,26 @@ export default {
 .page-heading {
   font-size: var(--font-xl, 1.75rem);
   margin-bottom: var(--space-m, 1rem);
+}
+
+.test-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s, 0.5rem);
+  margin-bottom: var(--space-m, 1rem);
+}
+
+.rg-test {
+  display: flex;
+  gap: var(--space-s, 0.5rem);
+  align-items: center;
+}
+
+.rg-test input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
 }
 
 /* Card-based results */
@@ -400,6 +490,17 @@ export default {
   margin-top: var(--space-m, 1rem);
   font-style: italic;
   color: var(--color-secondary, #666);
+}
+
+.card-actions {
+  margin-top: var(--space-s, 0.5rem);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.card-actions a {
+  color: var(--color-primary, #000);
+  text-decoration: underline;
 }
 
 .no-results {

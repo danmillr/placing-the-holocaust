@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "core-js": "^3.25.3",
+    "h3": "^2.0.1-rc.5",
     "jest-environment-jsdom": "^29.7.0",
     "maplibre-gl": "^5.0.1",
     "nuxt": "^2.15.8",
