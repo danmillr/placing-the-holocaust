@@ -1,3 +1,20 @@
+const fs = require('fs');
+const path = require('path');
+
+const transcriptsManifestPath = path.resolve(__dirname, 'static/data/transcripts.json');
+
+function loadTranscriptRoutes() {
+  try {
+    if (!fs.existsSync(transcriptsManifestPath)) return [];
+    const raw = fs.readFileSync(transcriptsManifestPath, 'utf8');
+    const data = JSON.parse(raw);
+    return (data.items || []).map((item) => `/transcripts/${item.slug}`);
+  } catch (err) {
+    console.warn('Unable to load transcript routes:', err.message);
+    return [];
+  }
+}
+
 export default {
   // Target: https://go.nuxtjs.dev/config-target
   target: 'static',
@@ -35,6 +52,7 @@ export default {
     // Generate Configuration
     generate: {
       fallback: '404.html', // Enables client-side routing
+      routes: loadTranscriptRoutes
     },
 
   // Global CSS: https://go.nuxtjs.dev/config-css

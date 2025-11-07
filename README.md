@@ -85,3 +85,13 @@ curl -s -X POST https://<your-domain>/api/weaviate \
   -H "Content-Type: application/json" \
   -d '{"query":"{ Aggregate { HolocaustTestimonies { meta { count } } } }"}'
 ```
+
+## Transcript build workflow
+
+Raw transcript HTML files (with front matter) live under `content/transcripts`. Generate the public JSON index and per-transcript HTML files with:
+
+```bash
+npm run transcripts:build
+```
+
+This writes `static/data/transcripts.json` (full metadata for detail pages), `static/data/transcripts-summary.json` (lightweight listing data), and cleaned HTML copies in `static/transcript-html/`. The command runs automatically before `npm run dev`, `npm run build`, and `npm run generate`, but you can also trigger it manually after adding new source files.

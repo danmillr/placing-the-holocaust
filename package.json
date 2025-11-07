@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "transcripts:build": "node scripts/build-transcripts.js",
+    "predev": "npm run transcripts:build",
+    "prebuild": "npm run transcripts:build",
+    "pregenerate": "npm run transcripts:build",
     "dev": "nuxt",
     "build": "nuxt build",
     "start": "nuxt start",
