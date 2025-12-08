@@ -5,8 +5,10 @@
 
       <form @submit.prevent="submitSearch">
         <!-- Query basics -->
-        <details class="dataset-section" open>
-          <summary class="section-summary">Query</summary>
+        <section class="dataset-section">
+          <div class="section-header">
+            <h3>Query</h3>
+          </div>
           <div class="field-group">
             <label for="qText">Query Text</label>
             <input id="qText" type="text" v-model="queryText" placeholder="Enter your search term" />
@@ -20,28 +22,23 @@
               <option>Hybrid</option>
             </select>
           </div>
-        </details>
+        </section>
 
         <hr class="section-divider" />
 
         <!-- Places -->
-        <details class="dataset-section">
-          <summary class="section-summary">
-            Places Filter
-            <span class="summary-switch">
-              <input type="checkbox" v-model="togglePlaces" />
-            </span>
-          </summary>
-
-          <div v-if="togglePlaces" class="dataset-controls">
-            <!-- Multi-select (button chips) -->
-            <details class="control-collapsible">
-              <summary class="control-summary">
+        <section class="dataset-section">
+          <div class="section-header">
+            <h3>Places Filter</h3>
+          </div>
+          <div class="dataset-controls">
+            <div class="control-collapsible">
+              <div class="control-summary">
                 <span class="filter-label">Select Place Labels</span>
                 <span class="summary-count">
                   ({{ selectedPlaces.length }}/{{ placeOptions.length }})
                 </span>
-              </summary>
+              </div>
 
               <div class="multi-select">
                 <div class="multi-buttons">
@@ -60,28 +57,25 @@
                   <button type="button" @click="clearAll('selectedPlaces')">Clear</button>
                 </div>
               </div>
-            </details>
+            </div>
           </div>
-        </details>
+        </section>
 
         <hr class="section-divider" />
 
         <!-- Testimony Filters -->
-        <details class="dataset-section">
-          <summary class="section-summary">
-            Testimony Filters
-            <span class="summary-switch">
-              <input type="checkbox" v-model="toggleTestimonyFilters" />
-            </span>
-          </summary>
+        <section class="dataset-section">
+          <div class="section-header">
+            <h3>Testimony Filters</h3>
+          </div>
 
-          <div v-if="toggleTestimonyFilters" class="dataset-controls">
+          <div class="dataset-controls">
             <!-- Category: multi-select chips -->
-            <details class="control-collapsible">
-              <summary class="control-summary">
+            <div class="control-collapsible">
+              <div class="control-summary">
                 <span class="filter-label">Category</span>
                 <span class="summary-count">({{ category.length }}/{{ categoryOptions.length }})</span>
-              </summary>
+              </div>
               <div class="multi-select">
                 <div class="multi-buttons">
                   <button
@@ -99,7 +93,7 @@
                   <button type="button" @click="clearAll('category')">Clear</button>
                 </div>
               </div>
-            </details>
+            </div>
 
             <!-- Single-select dropdowns / inputs -->
             <div class="grid-two">
@@ -147,20 +141,22 @@
               </div>
             </div>
           </div>
-        </details>
+        </section>
 
         <hr class="section-divider" />
 
         <!-- Advanced Options -->
-        <details class="dataset-section">
-          <summary class="section-summary">Advanced Options</summary>
+        <section class="dataset-section">
+          <div class="section-header">
+            <h3>Advanced Options</h3>
+          </div>
           <div class="advanced-panel">
             <div class="field-group">
               <label for="num">Number of Results</label>
               <input id="num" type="number" v-model.number="numResults" min="1" max="1000" />
             </div>
           </div>
-        </details>
+        </section>
 
         <!-- Submit -->
         <div class="actions">
@@ -168,16 +164,12 @@
           <button type="button" class="secondary" @click="resetForm">Reset</button>
         </div>
       </form>
-    </aside>
 
-    <!-- Optional query box: only when floating AND prop true -->
-    <div
-      v-if="floating && showQuerySummary && filterDescription"
-      class="legend-like"
-    >
-      <h3>Current Query</h3>
-      <p>{{ filterDescription }}</p>
-    </div>
+      <div v-if="showQuerySummary && filterDescription" class="query-summary">
+        <h4>Current Query</h4>
+        <p>{{ filterDescription }}</p>
+      </div>
+    </aside>
   </div>
 </template>
 
@@ -191,12 +183,13 @@ export default {
     birthYears: { type: Array, default: () => [] },
     placeLabelOptions: { type: Array, default: () => [] },
     showQuerySummary: { type: Boolean, default: false },
-    floating: { type: Boolean, default: false }
+    floating: { type: Boolean, default: false },
+    initialQueryText: { type: String, default: '' }
   },
   data() {
     return {
       queryType: "Vector",
-      queryText: "",
+      queryText: this.initialQueryText || "",
       togglePlaces: false,
       selectedPlaces: [],
       toggleTestimonyFilters: false,
@@ -211,6 +204,11 @@ export default {
       numResults: 100,
       categoryOptions: ["question", "answer"]
     };
+  },
+  watch: {
+    initialQueryText(val) {
+      this.queryText = val || "";
+    }
   },
   computed: {
     // Sanitize/normalize props for robust matching
@@ -300,7 +298,7 @@ export default {
         advanced: !!this.toggleAdvanced,
         numResults: Number(this.numResults) || 100
       };
-      this.$emit("search-submitted", filters);
+      this.$emit("search-submitted", { ...filters, _summary: this.filterDescription });
     }
   }
 };
@@ -341,7 +339,7 @@ h2 { margin: 0 0 8px; font-size: 1.2rem; }
 .dataset-section { margin-top: 8px; }
 .section-summary {
   display: flex; align-items: center; justify-content: space-between;
-  font-weight: 600; cursor: pointer; padding: 4px 0;
+  font-weight: 600; padding: 4px 0;
 }
 .summary-switch { margin-left: 10px; }
 .section-divider { border: none; border-top: 1px solid #ccc; margin: 12px 0 8px; }
@@ -359,7 +357,7 @@ h2 { margin: 0 0 8px; font-size: 1.2rem; }
   border: 1px solid #e3e3e3; border-radius: 8px; padding: 6px 8px;
   background: rgba(250,250,250,0.9); margin-bottom: 10px;
 }
-.control-summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+.control-summary { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
 .filter-label { font-weight: 600; }
 .summary-count { font-size: 0.85em; color: #555; }
 
@@ -374,6 +372,9 @@ h2 { margin: 0 0 8px; font-size: 1.2rem; }
 .multi-actions button {
   font-size: 0.8em; background: #f4f4f4; border: none; border-radius: 6px; padding: 4px 8px; cursor: pointer;
 }
+.section-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.toggle { font-size:0.9em; color:#444; }
+.query-summary { margin-top:12px; padding:8px 10px; background:#f7f7fa; border:1px solid #e3e3ec; border-radius:6px; font-size:0.9rem; color:#333; }
 
 /* Actions */
 .actions { display: flex; gap: 8px; margin-top: 8px; }

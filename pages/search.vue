@@ -15,6 +15,8 @@
         :experienceGroups="experienceGroups"
         :birthYears="birthYears"
         :placeLabelOptions="placeLabelOptions"
+        :initial-query-text="prefillQueryText"
+        show-query-summary
         @search-submitted="onSearchFormSubmitted"
       />
     </aside>
@@ -23,23 +25,15 @@
     <main class="content-area">
       <h1 class="page-heading">Search Transcripts</h1>
 
-      <div class="test-controls">
-        <button type="button" @click="runAggregateTest">Run Count Test</button>
-        <div class="rg-test">
-          <input
-            v-model="testRg"
-            type="text"
-            placeholder="Enter RG for sample test"
-          />
-          <button type="button" @click="runSampleRGTest">Run RG Test</button>
-        </div>
+      <div v-if="lastQuerySummary" class="query-summary-inline">
+        <strong>Query:</strong> {{ lastQuerySummary }}
       </div>
 
       <div v-if="results.length" class="results-list">
         <h2 class="results-count">Results ({{ results.length }})</h2>
         <div v-for="(row, idx) in results" :key="idx" class="result-card">
           <div class="card-header">
-            <strong>{{ row.full_name }}</strong>
+            <strong>{{ displayName(row) }}</strong>
             <span class="rg-label">RG: {{ row.rg }}</span>
           </div>
           <div class="card-body">
@@ -76,12 +70,13 @@ export default {
       loading: true,
       searched: false,
       results: [],
+      lastQuerySummary: '',
 
       genders: [],
       countries: [],
       experienceGroups: [],
       birthYears: [],
-      testRg: '',
+      prefillQueryText: '',
 
       // UI label -> Weaviate property mapping
       placeLabelMap: {
@@ -135,6 +130,7 @@ export default {
         .map(y => Number(y))
         .filter(y => Number.isFinite(y))
       this.birthYears = [...new Set(yearsNum)].sort((a,b) => a - b);
+      this.prefillQueryText = decodeURIComponent(this.$route.query.q || '');
     } catch (err) {
       console.error("Failed to load filters.json", err);
     } finally {
@@ -142,9 +138,20 @@ export default {
     }
   },
 
+  watch: {
+    '$route.query.q'() {
+      this.prefillQueryText = decodeURIComponent(this.$route.query.q || '');
+    }
+  },
+
   methods: {
+    displayName(row) {
+      const name = (row?.full_name || '').replace(/\bNone\b/gi, '').replace(/\s+/g, ' ').trim();
+      return name || (row?.full_name || '');
+    },
     async onSearchFormSubmitted(formData) {
       this.searched = true;
+      this.lastQuerySummary = formData._summary || '';
       try {
         const results = await this.doWeaviateQuery(formData);
         this.results = results;
@@ -296,7 +303,7 @@ export default {
         const orOps = filters.labels
           .map(lbl => this.placeLabelMap[lbl])
           .filter(Boolean)
-          .map(prop => `{ operator: GreaterThan, path: ["${prop}"], valueNumber: 0 }`);
+          .map(prop => `{ operator: IsNull, path: ["${prop}"], valueBoolean: false }`);
 
         if (orOps.length === 1) ops.push(orOps[0]);
         else if (orOps.length) ops.push(`{ operator: Or, operands: [${orOps.join(',')}] }`);
@@ -319,62 +326,6 @@ export default {
       });
       if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
       return resp.json();
-    },
-
-    async runAggregateTest() {
-      const query = `{ Aggregate { HolocaustTestimonies { meta { count } } } }`;
-      try {
-        const json = await this.postWeaviate(query);
-        console.log('Aggregate test result:', json);
-      } catch (err) {
-        console.error('Aggregate test failed:', err);
-      }
-    },
-
-    async runSampleRGTest() {
-      const trimmed = (this.testRg || '').trim();
-      if (!trimmed) {
-        console.warn('Provide an RG value for the test.');
-        return;
-      }
-      const query = `{
-        Get {
-          HolocaustTestimonies(
-            limit: 5,
-            where: {
-              operator: Equal,
-              path: ["rg"],
-              valueText: "${escQuotes(trimmed)}"
-            }
-          ) {
-            rg
-            full_name
-            birth_year
-            birth_country
-            gender
-            experience_group
-            sentence_ids
-            text
-            _additional { id distance }
-          }
-        }
-      }`;
-      try {
-        const json = await this.postWeaviate(query);
-        const testimonies = json.data?.Get?.HolocaustTestimonies || [];
-        this.results = testimonies.map(t => {
-          if (t._additional?.distance != null) {
-            t.score = Number((1 - t._additional.distance).toFixed(3));
-          } else {
-            t.score = null;
-          }
-          return t;
-        });
-        this.searched = true;
-        console.log('RG test result:', testimonies);
-      } catch (err) {
-        console.error('RG test failed:', err);
-      }
     }
   }
 }
@@ -512,5 +463,14 @@ export default {
 .loading-indicator {
   font-style: italic;
   color: var(--color-secondary, #777);
+}
+
+.query-summary-inline {
+  margin: var(--space-s, 0.5rem) 0 var(--space-m, 1rem);
+  padding: 8px 10px;
+  background: #f7f7fa;
+  border: 1px solid #e3e3ec;
+  border-radius: 6px;
+  font-size: 0.95rem;
 }
 </style>

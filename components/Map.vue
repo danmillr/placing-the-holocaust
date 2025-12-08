@@ -238,37 +238,21 @@
           <dd>{{ popupData.EncyStruc }}</dd>
         </div>
 
-        <!-- Ghetto-specific -->
-        <template v-if="popupData.SiteType === 'Ghetto'">
-          <div
-            v-for="ctrl in config.fieldControlsByDataset.ghetto"
-            :key="ctrl.field"
-            class="popup-field"
-            v-if="popupData[ctrl.field]"
-          >
-            <dt>{{ ctrl.label }}</dt>
-            <dd>{{ popupData[ctrl.field] }}</dd>
-          </div>
-        </template>
-
-        <!-- Camp-specific -->
-        <template v-else-if="popupData.SiteType && popupData.SiteType.toLowerCase().includes('camp')">
-          <div
-            v-for="ctrl in config.fieldControlsByDataset.camp"
-            :key="ctrl.field"
-            class="popup-field"
-            v-if="popupData[ctrl.field]"
-          >
-            <dt>{{ ctrl.label }}</dt>
-            <dd>{{ popupData[ctrl.field] }}</dd>
-          </div>
-        </template>
+        <!-- Dataset-specific fields -->
+        <div
+          v-for="entry in popupFieldEntries"
+          :key="entry.label"
+          class="popup-field"
+        >
+          <dt>{{ entry.label }}</dt>
+          <dd>{{ entry.value }}</dd>
+        </div>
 
         <!-- Transcript link -->
-        <div v-if="popupData.mentioned_in_transcripts" class="popup-field transcript-field">
+        <div v-if="isMentioned(popupData) && transcriptLink" class="popup-field transcript-field">
           <dt>Transcript</dt>
           <dd>
-            <a href="#" class="transcript-link">Search mentions of this place in transcripts</a>
+            <a :href="transcriptLink" class="transcript-link">Search mentions of this place in transcripts</a>
           </dd>
         </div>
       </dl>
@@ -285,6 +269,7 @@ import config from '@/static/data/map-config.json';
 // --- ISO date handling + defaults for time sliders ---
 const DEFAULT_DATE_START = '1933-02-01';
 const DEFAULT_DATE_END   = '1945-05-05';
+const BASE_PATH = process.env.NUXT_PUBLIC_BASE_PATH || '';
 
 function dateStrToMs(s) {
   if (!s) return NaN;
@@ -306,11 +291,23 @@ export default {
     zoom:      { type: Number, default: 4 }
   },
   data() {
+    // Clone config and make dataset-specific field keys so camp/ghetto filters don't bleed into each other
+    const configClone = JSON.parse(JSON.stringify(config));
+    ['camp', 'ghetto'].forEach(ds => {
+      configClone.fieldControlsByDataset[ds] = (configClone.fieldControlsByDataset[ds] || []).map(ctrl => {
+        return {
+          ...ctrl,
+          dataField: ctrl.field,
+          field: `${ds}__${ctrl.field}`
+        };
+      });
+    });
+
     const values = {};
     const options = {};
     const allCtrls = [
-      ...config.dropdownFilters,
-      ...Object.values(config.fieldControlsByDataset).flat()
+      ...configClone.dropdownFilters,
+      ...Object.values(configClone.fieldControlsByDataset).flat()
     ];
 
     allCtrls.forEach(ctrl => {
@@ -327,8 +324,8 @@ export default {
         }
       } else if (ctrl.type === 'time-slider') {
         // Convert provided YYYY-MM-DD (if any) to ms; fallback to defaults
-        let minStr = ctrl.options?.min;
-        let maxStr = ctrl.options?.max;
+        let minStr = ctrl.options?.min ?? ctrl.options?.start;
+        let maxStr = ctrl.options?.max ?? ctrl.options?.end;
         if (minStr == null || maxStr == null) {
           minStr = DEFAULT_DATE_START;
           maxStr = DEFAULT_DATE_END;
@@ -350,7 +347,7 @@ export default {
     options.mentioned_in_transcripts = [true, false];
 
     return {
-      config,
+      config: configClone,
       filterValues: values,
       filterOptions: options,
       sectionLabels: { camp: 'Camps', ghetto: 'Ghettos', transcripts: 'Transcripts' },
@@ -371,6 +368,26 @@ export default {
         maxHeight: `calc(100vh - ${top + 20}px)`,
         overflow: 'auto'
       };
+    },
+    popupFieldEntries() {
+      if (!this.popupData) return [];
+      const st = (this.popupData.SiteType || '').toLowerCase();
+      let ctrls = [];
+      if (st === 'ghetto') ctrls = this.config.fieldControlsByDataset.ghetto || [];
+      else if (st.includes('camp')) ctrls = this.config.fieldControlsByDataset.camp || [];
+
+      return ctrls
+        .map(ctrl => {
+          const val = this.popupData[ctrl.dataField] ?? this.popupData[ctrl.field];
+          return { label: ctrl.label, value: val };
+        })
+        .filter(entry => this.isDisplayValue(entry.value));
+    },
+    transcriptLink() {
+      if (!this.isMentioned(this.popupData)) return '';
+      const name = this.popupData?.SiteName || '';
+      const q = encodeURIComponent(name);
+      return `${BASE_PATH}/search?q=${q}`;
     }
   },
   mounted() {
@@ -384,6 +401,25 @@ export default {
     window.removeEventListener('resize', this.measureLegend);
   },
   methods: {
+    isControlActive(ctrl) {
+      const v = this.filterValues[ctrl.field];
+      const opts = this.filterOptions[ctrl.field];
+      if (ctrl.type === 'dropdown') return v !== '';
+      if (ctrl.type === 'multi-select') return Array.isArray(v) && v.length > 0;
+      if (ctrl.type === 'slider') {
+        const min = opts?.min;
+        return v != null && min != null && Number(v) > Number(min);
+      }
+      if (ctrl.type === 'time-slider') {
+        const min = opts?.min;
+        return v != null && min != null && Number(v) > Number(min);
+      }
+      return false;
+    },
+    slugify(text) {
+      const base = (text || '').toString().trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      return base || 'value';
+    },
     // ---- slider enable/guard helpers ----
     hasRange(field) {
       const o = this.filterOptions[field];
@@ -405,10 +441,23 @@ export default {
       if (val > max) return max;
       return val;
     },
+    isDisplayValue(val) {
+      if (val === undefined || val === null) return false;
+      const s = String(val).trim();
+      if (!s) return false;
+      const falsy = ['false', 'FALSE', 'False', '0'];
+      return !falsy.includes(s);
+    },
+    isMentioned(data) {
+      const v = data?.mentioned_in_transcripts;
+      return [true, 'true', 'True', 'TRUE', 1, '1'].includes(v);
+    },
     onSliderInput(field) {
       const v = Number(this.filterValues[field]);
       const clamped = this.clampToRange(field, v);
       if (clamped !== v) this.$set(this.filterValues, field, clamped);
+      const ctrl = [...this.config.dropdownFilters, ...Object.values(this.config.fieldControlsByDataset).flat()].find(c => c.field === field);
+      if (ctrl && ctrl.type === 'time-slider') return; // defer update to change to reduce jitter
       this.updateFilters();
     },
     onSliderChange(field) {
@@ -424,7 +473,7 @@ export default {
       const options = this.filterOptions;
 
       // dropdowns & multi-selects
-      config.dropdownFilters.forEach(c => {
+      this.config.dropdownFilters.forEach(c => {
         if (c.type === 'multi-select') this.$set(values, c.field, []);
         else if (c.type === 'dropdown') this.$set(values, c.field, '');
         else if (c.type === 'slider') {
@@ -470,7 +519,7 @@ export default {
       });
 
       this.map.on('load', () => {
-        const tileUrl = 'pmtiles://https://placing-holocaust-tiles.s3.us-east-2.amazonaws.com/gazetteer.pmtiles';
+        const tileUrl = 'pmtiles://https://placing-holocaust-tiles.s3.us-east-2.amazonaws.com/gazetteer_processed.pmtiles';
         this.map.addSource('gazetteer', {
           type: 'vector',
           url: tileUrl
@@ -480,7 +529,7 @@ export default {
           id: 'gazetteer',
           type: 'circle',
           source: 'gazetteer',
-          'source-layer': config.sourceLayer || 'gazetteer_full_output',
+          'source-layer': config.sourceLayer || 'gazetteer_full_output_processed',
           paint: {
             // Circle radius grows as you zoom in
             'circle-radius': [
@@ -530,16 +579,24 @@ export default {
       });
     },
     loadFilterOptions() {
-      const feats = this.map.querySourceFeatures(
-        'gazetteer',
-        { sourceLayer: config.sourceLayer || 'gazetteer_full_output' }
-      );
+      let feats = [];
+      try {
+        feats = this.map.querySourceFeatures(
+          'gazetteer',
+          { sourceLayer: this.config.sourceLayer || 'gazetteer_full_output_processed' }
+        );
+      } catch (e) {
+        console.warn('Failed to query source features', e);
+        return;
+      }
 
       // Populate dropdowns from tiles if flagged
-      config.dropdownFilters.forEach(f => {
+      this.config.dropdownFilters.forEach(f => {
         if (f.loadFrom === 'tiles' && !f.options) {
           const set = new Set(
-            feats.map(ft => ft.properties?.[f.field]).filter(v => v !== null && v !== undefined && v !== '')
+            feats
+              .map(ft => ft.properties?.[f.field])
+              .filter(v => v !== null && v !== undefined && v !== '')
           );
           this.$set(this.filterOptions, f.field, Array.from(set).sort());
         }
@@ -549,22 +606,37 @@ export default {
       Object.values(this.config.fieldControlsByDataset).flat()
         .filter(c => c.type === 'multi-select' && (!c.options || c.options.length === 0))
         .forEach(c => {
-          const set = new Set(
-            feats.map(ft => ft.properties?.[c.field]).filter(v => v !== null && v !== undefined && v !== '')
-          );
+          const dataField = c.dataField || c.field;
+          const set = new Set();
+          feats.forEach(ft => {
+            const val = ft.properties?.[dataField];
+            if (val === null || val === undefined || val === '') return;
+            if (dataField === 'Nation' || dataField === 'InmateType') {
+              String(val).split(';').forEach(tok => {
+                const t = tok.trim();
+                if (t) set.add(t);
+              });
+            } else {
+              set.add(val);
+            }
+          });
           this.$set(this.filterOptions, c.field, Array.from(set).sort());
         });
 
       // Derive min/max for sliders and time-sliders if missing
       const allCtrls = [
-        ...config.dropdownFilters,
-        ...Object.values(config.fieldControlsByDataset).flat()
+        ...this.config.dropdownFilters,
+        ...Object.values(this.config.fieldControlsByDataset).flat()
       ];
 
       allCtrls.forEach(c => {
+        const dataField = c.dataField || c.field;
+        const fieldExists = feats.some(ft => Object.prototype.hasOwnProperty.call(ft.properties || {}, dataField));
+        if (!fieldExists) return;
+
         if (c.type === 'slider' &&
             (this.filterOptions[c.field]?.min == null || this.filterOptions[c.field]?.max == null)) {
-          const vals = feats.map(ft => ft.properties?.[c.field])
+          const vals = feats.map(ft => ft.properties?.[dataField])
             .filter(v => v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v)))
             .map(v => Number(v));
 
@@ -583,7 +655,7 @@ export default {
         if (c.type === 'time-slider' &&
             (this.filterOptions[c.field]?.min == null || this.filterOptions[c.field]?.max == null)) {
           // Gather ISO strings -> ms
-          const msVals = feats.map(ft => ft.properties?.[c.field])
+          const msVals = feats.map(ft => ft.properties?.[dataField])
             .filter(v => v && typeof v === 'string')
             .map(v => dateStrToMs(v))
             .filter(t => !Number.isNaN(t));
@@ -626,41 +698,132 @@ export default {
       this.updateFilters();
     },
     updateFilters() {
-      const expr = ['all'];
-      const ctrls = [
-        ...config.dropdownFilters,
-        ...Object.values(config.fieldControlsByDataset).flat()
-      ];
+      const campTypes = ['Camp', 'Main camp', 'Subcamp', 'Death camp'];
+      const ghettoTypes = ['Ghetto'];
+      const containsFields = ['Nation', 'InmateType'];
 
-      ctrls.forEach(c => {
-        const v = this.filterValues[c.field];
-        if (c.type === 'dropdown' && v) {
-          expr.push(['==', ['get', c.field], v]);
-        }
-        if (c.type === 'multi-select' && Array.isArray(v) && v.length) {
-          expr.push(['in', ['get', c.field], ['literal', v]]);
+      const addControlFilters = (ctrl, expr) => {
+        const v = this.filterValues[ctrl.field];
+        const dataField = ctrl.dataField || ctrl.field;
+
+        if (ctrl.type === 'dropdown' && v) {
+          expr.push(['==', ['get', dataField], v]);
         }
 
-        const sliderOpts = this.filterOptions[c.field];
-
-        // numeric slider: only apply if value > min (so default state doesn't filter)
-        if (c.type === 'slider' && v != null && sliderOpts && sliderOpts.min != null && v > sliderOpts.min) {
-          expr.push(['>=', ['to-number', ['get', c.field]], v]);
-        }
-
-        // time slider: only apply if value > min (default shows everything)
-        if (c.type === 'time-slider' && v != null && sliderOpts && sliderOpts.min != null && v > sliderOpts.min) {
-          const vStr = msToDateStr(v);
-          if (vStr) {
-            // Compare ISO strings lexicographically
-            expr.push(['>=', ['get', c.field], vStr]);
+        if (ctrl.type === 'multi-select' && Array.isArray(v) && v.length) {
+          if (dataField === 'HoldPStruc' || dataField === 'RestrType') {
+            const clauses = v.map(opt => ['==', ['get', `${dataField}_${this.slugify(opt)}`], 'TRUE']);
+            if (clauses.length) expr.push(['any', ...clauses]);
+          } else if (dataField === 'Demographics') {
+            const fieldMap = {
+              Men: 'Men',
+              Women: 'Women',
+              Elderly: 'Elderly',
+              Youth: 'Youth',
+              Children: 'Children'
+            };
+            const trueLiterals = ['TRUE', 'True', 'true', true, 1, '1'];
+            const clauses = v
+              .map(opt => fieldMap[opt])
+              .filter(Boolean)
+              .map(f => ['in', ['get', f], ['literal', trueLiterals]]);
+            // Fallback: also check semicolon list if present
+            v.forEach(opt => {
+              clauses.push(['>=', ['index-of', opt, ['coalesce', ['get', 'DemographicsList'], '']], 0]);
+            });
+            if (clauses.length) expr.push(['any', ...clauses]); // match any selected demographic
+          } else if (containsFields.includes(dataField)) {
+            const clauses = v.map(opt => ['>=', ['index-of', opt, ['get', dataField]], 0]);
+            if (clauses.length) expr.push(['any', ...clauses]);
+          } else {
+            expr.push(['in', ['get', dataField], ['literal', v]]);
           }
         }
-      });
+
+        const sliderOpts = this.filterOptions[ctrl.field];
+
+        // numeric slider: only apply if value > min (so default state doesn't filter)
+        if (ctrl.type === 'slider' && v != null && sliderOpts && sliderOpts.min != null && v > sliderOpts.min) {
+          expr.push(['>=', ['to-number', ['get', dataField]], v]);
+        }
+
+        // time sliders: handle Start/End ranges separately; other time sliders apply simple compare
+        if (
+          ctrl.type === 'time-slider' &&
+          !['StartMid_ISO', 'EndMid_ISO'].includes(dataField) &&
+          v != null &&
+          sliderOpts &&
+          sliderOpts.min != null &&
+          v > sliderOpts.min
+        ) {
+          const vStr = msToDateStr(v);
+          if (vStr) {
+            const compareOp = dataField.toLowerCase().includes('end') ? '<=' : '>=';
+            expr.push([compareOp, ['get', dataField], vStr]);
+          }
+        }
+      };
+
+      const globalExpr = ['all'];
+      this.config.dropdownFilters.forEach(c => addControlFilters(c, globalExpr));
+
+      const buildTimeRangeExpr = (ctrls) => {
+        const startCtrl = ctrls.find(c => c.dataField === 'StartMid_ISO');
+        const endCtrl   = ctrls.find(c => c.dataField === 'EndMid_ISO');
+        if (!startCtrl && !endCtrl) return null;
+
+        const startVal = startCtrl ? this.filterValues[startCtrl.field] : null;
+        const endVal   = endCtrl ? this.filterValues[endCtrl.field] : null;
+        const startOpts = startCtrl ? this.filterOptions[startCtrl.field] : null;
+        const endOpts   = endCtrl ? this.filterOptions[endCtrl.field] : null;
+
+        const startActive = startCtrl && startOpts?.min != null && startVal != null && Number(startVal) > Number(startOpts.min);
+        const endActive   = endCtrl && endOpts?.min != null && endVal != null && Number(endVal) > Number(endOpts.min);
+
+        if (!startActive && !endActive) return null;
+
+        const startMs = startActive ? Number(startVal) : Number(startOpts?.min);
+        const endMs   = endActive ? Number(endVal)   : Number(endOpts?.max);
+        const startStr = msToDateStr(startMs);
+        const endStr   = msToDateStr(endMs);
+        if (!startStr || !endStr) return null;
+
+        const endField = ['coalesce', ['get', 'EndMid_ISO'], ['get', 'StartMid_ISO']];
+        return ['all', ['<=', ['get', 'StartMid_ISO'], endStr], ['>=', endField, startStr]];
+      };
+
+      const buildSiteExpr = (types, ctrls) => {
+        const expr = ['all', ['in', ['get', 'SiteType'], ['literal', types]]];
+        ctrls.forEach(c => addControlFilters(c, expr));
+        const timeRangeExpr = buildTimeRangeExpr(ctrls);
+        if (timeRangeExpr) expr.push(timeRangeExpr);
+        return expr;
+      };
+
+      const campExpr = buildSiteExpr(campTypes, this.config.fieldControlsByDataset.camp || []);
+      const ghettoExpr = buildSiteExpr(ghettoTypes, this.config.fieldControlsByDataset.ghetto || []);
+
+      const campActive = (this.config.fieldControlsByDataset.camp || []).some(c => this.isControlActive(c));
+      const ghettoActive = (this.config.fieldControlsByDataset.ghetto || []).some(c => this.isControlActive(c));
+
+      let expr;
+      if (campActive && ghettoActive) {
+        expr = ['all', ...globalExpr.slice(1), ['any', campExpr, ghettoExpr]];
+      } else if (campActive) {
+        expr = ['all', ...globalExpr.slice(1), campExpr];
+      } else if (ghettoActive) {
+        expr = ['all', ...globalExpr.slice(1), ghettoExpr];
+      } else {
+        expr = globalExpr;
+      }
 
       const t = this.filterValues.mentioned_in_transcripts;
-      if (t === true) expr.push(['==', ['get', 'mentioned_in_transcripts'], true]);
-      if (t === false) expr.push(['==', ['get', 'mentioned_in_transcripts'], false]);
+      if (t === true) {
+        expr.push(['in', ['get', 'mentioned_in_transcripts'], ['literal', [true, 'true', 'True', 'TRUE', 1, '1']]]);
+      }
+      if (t === false) {
+        expr.push(['in', ['get', 'mentioned_in_transcripts'], ['literal', [false, 'false', 'False', 'FALSE', 0, '0']]]);
+      }
 
       if (this.map && this.map.getLayer('gazetteer')) {
         this.map.setFilter('gazetteer', expr);

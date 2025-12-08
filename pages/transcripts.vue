@@ -89,10 +89,15 @@ import { getTranscriptsManifest } from '@/utils/transcripts';
 export default {
   name: 'TranscriptsPage',
   async asyncData() {
-    const manifest = await getTranscriptsManifest('summary');
-    return {
-      transcripts: manifest?.items || []
-    };
+    try {
+      const manifest = await getTranscriptsManifest('summary');
+      return {
+        transcripts: manifest?.items || []
+      };
+    } catch (err) {
+      console.error('Failed to load transcripts manifest', err);
+      return { transcripts: [] };
+    }
   },
   data() {
     return {

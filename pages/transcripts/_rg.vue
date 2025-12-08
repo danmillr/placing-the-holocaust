@@ -117,10 +117,11 @@ export default {
     } else {
       const basePath = process.env.NUXT_PUBLIC_BASE_PATH || '';
       const response = await fetch(`${basePath}/transcript-html/${transcript.slug}.html`);
-      if (!response.ok) {
-        throw new Error('Failed to load transcript');
+      if (response.ok) {
+        htmlContent = await response.text();
+      } else {
+        console.warn('Transcript HTML not found for', transcript.slug);
       }
-      htmlContent = await response.text();
     }
 
     return {
