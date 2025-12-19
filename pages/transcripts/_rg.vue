@@ -2,78 +2,46 @@
   <div class="transcript-page" v-if="transcript">
     <NuxtLink class="back-link" to="/transcripts">← Back to library</NuxtLink>
 
-    <div class="transcript-heading">
-      <div>
-        <p class="eyebrow">RG {{ transcript.rg_number }}</p>
-        <h1>{{ transcript.interviewee || 'Interview transcript' }}</h1>
-        <p class="meta-line">
-          <span v-if="transcript.place_of_birth">Born in {{ transcript.place_of_birth }}</span>
-          <span v-if="transcript.country">({{ transcript.country }})</span>
-          <span v-if="transcript.birth_year">· {{ transcript.birth_year }}</span>
-        </p>
-      </div>
-      <div class="cta-row">
-        <a v-if="transcript.ushmm_url" :href="transcript.ushmm_url" target="_blank" rel="noopener" class="secondary-link">
-          View on USHMM
-        </a>
-        <a v-if="transcript.pdf_url" :href="transcript.pdf_url" target="_blank" rel="noopener" class="secondary-link">
-          Download PDF
-        </a>
-      </div>
-    </div>
+    <div class="transcript-container">
+      <div class="transcript-info">
+        <div class="transcript-metadata">
+          <p><b>Name:</b> {{ capitalizeWords(displayName(transcript.interviewee)) || 'Unknown' }}</p>
+          <p><b>RG Number:</b> {{ transcript.rg_number }}</p>
+          <p v-if="transcript.ushmm_url"><b>URL:</b> <a class="fade" :href="transcript.ushmm_url" target="_blank">{{ transcript.ushmm_url }}</a></p>
+          <p v-if="transcript.birth_year"><b>Birth Year:</b> {{ transcript.birth_year }}</p>
+          <p v-if="transcript.place_of_birth"><b>Place of Birth:</b> <span style="text-transform: capitalize;">{{ capitalizeWords(transcript.place_of_birth) }}</span></p>
+          <p v-if="transcript.country"><b>Country:</b> <span style="text-transform: capitalize;">{{ capitalizeWords(transcript.country) }}</span></p>
+          <p v-if="transcript.experience_group"><b>Experience Group:</b> <span style="text-transform: capitalize;">{{ capitalizeWords(transcript.experience_group) }}</span></p>
+          <p v-if="transcript.gender"><b>Gender:</b> {{ capitalizeWords(transcript.gender) }}</p>
+        </div>
 
-    <section class="transcript-info">
-      <div class="transcript-metadata">
-        <dl>
-          <div>
-            <dt>Name</dt>
-            <dd>{{ transcript.interviewee || 'Unknown' }}</dd>
-          </div>
-          <div>
-            <dt>RG number</dt>
-            <dd>{{ transcript.rg_number }}</dd>
-          </div>
-          <div v-if="transcript.birth_date">
-            <dt>Birth date</dt>
-            <dd>{{ transcript.birth_date }}</dd>
-          </div>
-          <div v-if="transcript.experience_group">
-            <dt>Experience group</dt>
-            <dd>{{ transcript.experience_group }}</dd>
-          </div>
-          <div v-if="transcript.gender">
-            <dt>Gender</dt>
-            <dd>{{ transcript.gender }}</dd>
-          </div>
-        </dl>
-      </div>
-      <div class="transcript-categories" v-if="categoryEntries.length">
-        <div
-          v-for="cat in categoryEntries"
-          :key="cat.key"
-          class="category"
-        >
-          <details open>
-            <summary>
-              <span>{{ cat.label }}</span>
-              <span class="count">{{ cat.values.length }}</span>
-            </summary>
-            <ul>
-              <li v-for="value in cat.values" :key="value">{{ value }}</li>
+        <div class="transcript-categories" v-if="categoryEntries.length">
+          <div
+            v-for="cat in categoryEntries"
+            :key="cat.key"
+            class="category stack"
+          >
+            <p class="category-header" :class="cat.key" @click="toggleCategory(cat.key)">
+              <span class="header-text">{{ cat.label }}</span>
+              <span class="caret" :class="{ 'rotate-caret': isCategoryCollapsed(cat.key) }">▶</span>
+            </p>
+            <ul :class="isCategoryCollapsed(cat.key) ? 'hide-content' : 'show-content'">
+              <li v-for="value in cat.values" :key="value">{{ capitalizeWords(value) }}</li>
             </ul>
-          </details>
+          </div>
         </div>
       </div>
-    </section>
 
-    <section class="transcript-content">
-      <div ref="transcriptBody" class="transcript-body" v-html="htmlContent"></div>
-    </section>
+      <div class="transcript-content">
+        <div ref="transcriptBody" class="transcript-body transcript" v-html="htmlContent"></div>
+      </div>
+    </div>
   </div>
 
   <div v-else class="transcript-page">
     <NuxtLink class="back-link" to="/transcripts">← Back to library</NuxtLink>
-    <p>We couldn’t find that transcript.</p>
+    <p v-if="manifestError">Transcript data is unavailable right now. Please check your connection and try again.</p>
+    <p v-else>We couldn’t find that transcript.</p>
   </div>
 </template>
 
@@ -97,37 +65,51 @@ const CATEGORY_ORDER = Object.keys(CATEGORY_LABELS);
 export default {
   name: 'TranscriptDetailPage',
   async asyncData({ params, error }) {
-    const manifest = await getTranscriptsManifest();
-    const items = manifest?.items || [];
-    const slug = params.rg?.toLowerCase() || '';
-    const transcript = items.find((item) => item.slug === slug);
-    if (!transcript) {
-      error({ statusCode: 404, message: 'Transcript not found' });
-      return {};
-    }
-
-    let htmlContent = '';
-    if (process.server) {
-      const fs = eval('require')('fs');
-      const path = eval('require')('path');
-      const htmlPath = path.join(process.cwd(), 'static', 'transcript-html', `${transcript.slug}.html`);
-      if (fs.existsSync(htmlPath)) {
-        htmlContent = fs.readFileSync(htmlPath, 'utf8');
+    try {
+      const manifest = await getTranscriptsManifest();
+      const items = manifest?.items || [];
+      const slug = params.rg?.toLowerCase() || '';
+      const transcript = items.find((item) => item.slug === slug);
+      if (!transcript) {
+        return { transcript: null, htmlContent: '', manifestError: false };
       }
-    } else {
-      const basePath = process.env.NUXT_PUBLIC_BASE_PATH || '';
-      const response = await fetch(`${basePath}/transcript-html/${transcript.slug}.html`);
-      if (response.ok) {
-        htmlContent = await response.text();
+
+      let htmlContent = '';
+      if (process.server) {
+        const fs = eval('require')('fs');
+        const path = eval('require')('path');
+        const htmlPath = path.join(process.cwd(), 'static', 'transcript-html', `${transcript.slug}.html`);
+        if (fs.existsSync(htmlPath)) {
+          htmlContent = fs.readFileSync(htmlPath, 'utf8');
+        }
       } else {
-        console.warn('Transcript HTML not found for', transcript.slug);
+        const basePath = process.env.NUXT_PUBLIC_BASE_PATH || '';
+        const url = `${basePath}/transcript-html/${transcript.slug}.html`;
+        try {
+          const response = await fetch(url);
+          if (response.ok) {
+            htmlContent = await response.text();
+          } else {
+            console.warn('Transcript HTML not found for', transcript.slug);
+          }
+        } catch (e) {
+          console.warn('Transcript HTML fetch failed for', transcript.slug, e);
+        }
       }
-    }
 
-    return {
-      transcript,
-      htmlContent
-    };
+      return {
+        transcript,
+        htmlContent,
+        manifestError: false
+      };
+    } catch (e) {
+      console.warn('Failed to load transcript data', e);
+      return {
+        transcript: null,
+        htmlContent: '',
+        manifestError: true
+      };
+    }
   },
   head() {
     const title = this.transcript
@@ -135,6 +117,14 @@ export default {
       : 'Transcript';
     return {
       title
+    };
+  },
+  data() {
+    return {
+      transcript: this.transcript || null,
+      htmlContent: this.htmlContent || '',
+      manifestError: this.manifestError || false,
+      collapsedCategories: []
     };
   },
   computed: {
@@ -152,7 +142,7 @@ export default {
     }
   },
   mounted() {
-    this.decorateTranscript();
+    this.loadClientData();
   },
   watch: {
     '$route.hash'() {
@@ -160,6 +150,91 @@ export default {
     }
   },
   methods: {
+    displayName(name) {
+      const cleaned = (name || '').replace(/\bNone\b/gi, '').replace(/\s+/g, ' ').trim();
+      return cleaned;
+    },
+    capitalizeWords(text) {
+      return (text || '')
+        .toString()
+        .split(' ')
+        .map(w => w ? w[0].toUpperCase() + w.slice(1) : '')
+        .join(' ')
+        .trim();
+    },
+    toggleCategory(key) {
+      if (this.collapsedCategories.includes(key)) {
+        this.collapsedCategories = this.collapsedCategories.filter(k => k !== key);
+      } else {
+        this.collapsedCategories = [...this.collapsedCategories, key];
+      }
+    },
+    isCategoryCollapsed(key) {
+      return this.collapsedCategories.includes(key);
+    },
+    async loadClientData() {
+      try {
+        // Always fetch manifest + HTML client-side to avoid SSR gaps
+        const basePath = process.env.NUXT_PUBLIC_BASE_PATH || '';
+        const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+        const prefix = basePath || origin;
+        const manifestUrl = `${prefix}/data/transcripts.json`;
+        const resp = await fetch(manifestUrl);
+        if (resp.ok) {
+          const data = await resp.json();
+          const items = data?.items || [];
+          const slug = this.$route.params.rg?.toLowerCase() || '';
+          const transcript = items.find(item => item.slug === slug);
+          if (transcript) {
+            this.transcript = transcript;
+          }
+        }
+
+        if (this.transcript) {
+          const htmlUrl = `${prefix}/transcript-html/${this.transcript.slug}.html`;
+          const htmlResp = await fetch(htmlUrl);
+          if (htmlResp.ok) {
+            this.htmlContent = await htmlResp.text();
+          }
+        }
+      } catch (e) {
+        console.warn('Client transcript fetch failed', e);
+      } finally {
+        this.$nextTick(() => this.decorateTranscript());
+      }
+    },
+    async loadClientFallback() {
+      // If SSR failed to load, try client-side manifest + HTML fetch
+      try {
+        const basePath = process.env.NUXT_PUBLIC_BASE_PATH || '';
+        const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+        const prefix = basePath || origin;
+        const manifestUrl = `${prefix}/data/transcripts.json`;
+        const resp = await fetch(manifestUrl);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const items = data?.items || [];
+        const slug = this.$route.params.rg?.toLowerCase() || '';
+        const transcript = items.find(item => item.slug === slug);
+        if (!transcript) return;
+
+        this.transcript = transcript;
+
+        try {
+          const htmlUrl = `${prefix}/transcript-html/${transcript.slug}.html`;
+          const htmlResp = await fetch(htmlUrl);
+          if (htmlResp.ok) {
+            this.htmlContent = await htmlResp.text();
+          }
+        } catch (e) {
+          console.warn('Client fallback HTML fetch failed', e);
+        }
+
+        this.$nextTick(() => this.decorateTranscript());
+      } catch (e) {
+        console.warn('Client fallback manifest fetch failed', e);
+      }
+    },
     decorateTranscript() {
       const altNames = CATEGORY_LABELS;
       const bodyEl = this.$refs.transcriptBody;
@@ -326,4 +401,111 @@ export default {
 .transcript-body .highlighted {
   background: yellow;
 }
+</style>
+<style scoped>
+.transcript-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3rem;
+}
+
+.back-link {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  text-decoration: none;
+  color: #111;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.transcript-container {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+.transcript-info {
+  grid-column: 1 / span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-self: start;
+}
+.transcript-content { grid-column: 3 / span 4; }
+
+.transcript-metadata {
+  margin-bottom: 1rem;
+  font-family: "usual", sans-serif;
+  font-weight: 300;
+}
+.transcript-metadata p { margin: 0 0 0.35rem 0; }
+.transcript-metadata a { color: #0a66c2; word-break: break-all; }
+
+.transcript-categories {
+  display: inline-grid;
+  gap: 0.5rem;
+  position: sticky;
+  top: 20px;
+  width: 100%;
+}
+.category {
+  border-radius: 10px;
+  padding: 12px 10px;
+  background: #f7f7f7;
+  border: 1px solid #e0e0e0;
+}
+.category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: 0 6px;
+  font-weight: 600;
+}
+.header-text { flex-grow: 1; text-transform: uppercase; font-size: 0.95rem; }
+.caret { transition: transform 0.3s ease; font-size: 0.9rem; }
+.rotate-caret { transform: rotate(-90deg); }
+.category ul { padding-left: 14px; margin: 6px 0 0 0; }
+.category li { font-family: "usual", sans-serif; font-weight: 300; padding: 2px 0; }
+.hide-content { display: none; }
+.show-content { display: block; }
+
+.transcript-body {
+  border: 1px solid #e2e2e2;
+  border-radius: 10px;
+  padding: 1rem;
+  background: #fff;
+  line-height: 1.6;
+  color: #111;
+}
+.transcript-body dialogue {
+  display: block;
+  margin-bottom: 1rem;
+}
+.transcript-body dialogue.Question sentence::before { content: 'Q: '; font-weight: 600; }
+.transcript-body dialogue.Answer sentence::before { content: 'A: '; font-weight: 600; }
+.transcript-body .highlighted { background: yellow; }
+
+/* Category colors */
+.category-header.REGION { background-color: #B9C2CB; }
+.category-header.COUNTRY { background-color: #A9B2A1; }
+.category-header.POPULATED_PLACE { background-color: #00bffb; }
+.category-header.ENV_FEATURES { background-color: #0CCD42; }
+.category-header.DLF { background-color: #FFD337; }
+.category-header.BUILDING { background-color: #FF7F08; }
+.category-header.INT_SPACE { background-color: #a07ee9; }
+.category-header.SPATIAL_OBJ { background-color: #E57DE8; }
+.category-header.NPIP { background-color: #FA0048; }
+.category-header .header-text { color: #111; }
+
+/* Annotated span colors inside transcript content */
+:deep(.transcript-body span.REGION) { background-color: #B9C2CB; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.COUNTRY) { background-color: #A9B2A1; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.POPULATED_PLACE) { background-color: #00bffb; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.ENV_FEATURES) { background-color: #0CCD42; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.DLF) { background-color: #FFD337; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.BUILDING) { background-color: #FF7F08; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.INT_SPACE) { background-color: #a07ee9; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.SPATIAL_OBJ) { background-color: #E57DE8; border-radius:5px; padding:0 2.5px; }
+:deep(.transcript-body span.NPIP) { background-color: #FA0048; border-radius:5px; padding:0 2.5px; }
 </style>

@@ -1,85 +1,84 @@
 <template>
   <div class="transcripts-page">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">Transcripts</p>
-        <h1>Interview Library</h1>
-        <p class="lede">
-          Browse the digitised testimony collection. Use the quick filters to narrow by country or experience group, or search by name or RG number.
-        </p>
-      </div>
-      <div class="search-panel">
-        <label class="sr-only" for="transcript-search">Search transcripts</label>
-        <input
-          id="transcript-search"
-          v-model.trim="searchText"
-          type="search"
-          placeholder="Search by name, RG number, or keyword"
-        />
-        <div class="select-row">
-          <label>
-            Country
-            <select v-model="countryFilter">
-              <option value="">All</option>
-              <option v-for="country in countries" :key="country" :value="country">{{ country }}</option>
-            </select>
-          </label>
-          <label>
-            Experience group
-            <select v-model="experienceFilter">
-              <option value="">All</option>
-              <option v-for="group in experienceGroups" :key="group" :value="group">{{ group }}</option>
-            </select>
-          </label>
+    <template v-if="!$route.params.rg">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Transcripts</p>
+          <h1>Interview Library</h1>
+          <p class="lede">
+            Browse the digitised testimony collection. Use the quick filters to narrow by country or experience group, or search by name or RG number.
+          </p>
         </div>
-      </div>
-    </header>
+        <div class="search-panel">
+          <label class="sr-only" for="transcript-search">Search transcripts</label>
+          <input
+            id="transcript-search"
+            v-model.trim="searchText"
+            type="search"
+            placeholder="Search by name, RG number, or keyword"
+          />
+          <div class="select-row">
+            <label>
+              Country
+              <select v-model="countryFilter">
+                <option value="">All</option>
+                <option v-for="country in countries" :key="country" :value="country">{{ country }}</option>
+              </select>
+            </label>
+            <label>
+              Experience group
+              <select v-model="experienceFilter">
+                <option value="">All</option>
+                <option v-for="group in experienceGroups" :key="group" :value="group">{{ group }}</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </header>
 
-    <p class="results-count">
-      Showing <strong>{{ filteredTranscripts.length }}</strong> of {{ transcripts.length }} transcripts
-    </p>
+      <p class="results-count">
+        Showing <strong>{{ filteredTranscripts.length }}</strong> of {{ transcripts.length }} transcripts
+      </p>
+    </template>
 
-    <div v-if="filteredTranscripts.length" class="transcripts-grid">
+    <div v-if="!$route.params.rg && filteredTranscripts.length" class="transcripts-grid">
       <article v-for="item in filteredTranscripts" :key="item.slug" class="transcript-card">
         <div class="card-header">
-          <h2>{{ item.interviewee || 'Unknown interviewee' }}</h2>
+          <h2>{{ capitalizeWords(displayName(item.interviewee)) || 'Unknown interviewee' }}</h2>
           <p class="rg-number">RG: {{ item.rg_number }}</p>
         </div>
         <ul class="card-meta">
           <li v-if="item.place_of_birth">
             <span class="label">Birthplace</span>
-            <span>{{ item.place_of_birth }}</span>
+            <span>{{ capitalizeWords(item.place_of_birth) }}</span>
           </li>
           <li v-if="item.country">
             <span class="label">Country</span>
-            <span>{{ item.country }}</span>
+            <span>{{ capitalizeWords(item.country) }}</span>
           </li>
           <li v-if="item.experience_group">
             <span class="label">Experience</span>
-            <span>{{ item.experience_group }}</span>
+            <span>{{ capitalizeWords(item.experience_group) }}</span>
           </li>
           <li v-if="item.birth_year">
             <span class="label">Birth year</span>
             <span>{{ item.birth_year }}</span>
           </li>
         </ul>
-        <p v-if="item.excerpt" class="card-excerpt">
-          {{ item.excerpt }}
-        </p>
         <div class="card-actions">
           <NuxtLink class="primary-link" :to="`/transcripts/${item.slug}`">
             Open transcript
           </NuxtLink>
-          <a v-if="item.pdf_url" class="secondary-link" :href="item.pdf_url" target="_blank" rel="noopener">
-            Download PDF
-          </a>
         </div>
       </article>
     </div>
 
-    <div v-else class="empty-state">
+    <div v-else-if="!$route.params.rg" class="empty-state">
       <p>No transcripts match your filters yet. Try clearing the search or selecting a different country.</p>
     </div>
+
+    <!-- Detail view -->
+    <NuxtChild v-if="$route.params.rg" />
   </div>
 </template>
 
@@ -138,6 +137,20 @@ export default {
 
         return matchesTerm && matchesCountry && matchesExperience;
       });
+    }
+  },
+  methods: {
+    displayName(name) {
+      const cleaned = (name || '').replace(/\bNone\b/gi, '').replace(/\s+/g, ' ').trim();
+      return cleaned;
+    },
+    capitalizeWords(text) {
+      return (text || '')
+        .toString()
+        .split(' ')
+        .map(w => w ? w[0].toUpperCase() + w.slice(1) : '')
+        .join(' ')
+        .trim();
     }
   }
 };

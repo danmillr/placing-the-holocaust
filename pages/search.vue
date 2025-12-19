@@ -105,37 +105,8 @@ export default {
     }
   },
 
-  async created() {
-    try {
-      const basePath = process.env.NUXT_PUBLIC_BASE_PATH || '';
-      const filterPath = `${basePath}/data/filters.json`;
-      const resp = await fetch(filterPath);
-      const filterData = await resp.json();
-
-      // As-received
-      const rawGenders = filterData.genders || [];
-      const rawCountries = filterData.countries || [];
-      const rawExperience = filterData.experience_groups || [];
-      const rawYears = filterData.birth_years || [];
-
-      // Sanitize on load
-      this.genders = [...new Set(rawGenders.map(g => (g ?? '').toString().trim()))].filter(Boolean);
-
-      const trimmedCountries = rawCountries.map(c => (c ?? '').toString().trim()).filter(Boolean);
-      this.countries = [...new Set(trimmedCountries)];
-
-      this.experienceGroups = [...new Set(rawExperience.map(e => (e ?? '').toString().trim()))].filter(Boolean);
-
-      const yearsNum = rawYears
-        .map(y => Number(y))
-        .filter(y => Number.isFinite(y))
-      this.birthYears = [...new Set(yearsNum)].sort((a,b) => a - b);
-      this.prefillQueryText = decodeURIComponent(this.$route.query.q || '');
-    } catch (err) {
-      console.error("Failed to load filters.json", err);
-    } finally {
-      this.loading = false;
-    }
+  async mounted() {
+    await this.loadFilters();
   },
 
   watch: {
@@ -148,6 +119,35 @@ export default {
     displayName(row) {
       const name = (row?.full_name || '').replace(/\bNone\b/gi, '').replace(/\s+/g, ' ').trim();
       return name || (row?.full_name || '');
+    },
+    async loadFilters() {
+      if (!process.client) return;
+      try {
+        const basePath = process.env.NUXT_PUBLIC_BASE_PATH || '';
+        const origin = window.location.origin || '';
+        const filterPath = basePath
+          ? `${basePath.replace(/\/$/, '')}/data/filters.json`
+          : `${origin}/data/filters.json`;
+        const resp = await fetch(filterPath);
+        const filterData = await resp.json();
+
+        const rawGenders = filterData.genders || [];
+        const rawCountries = filterData.countries || [];
+        const rawExperience = filterData.experience_groups || [];
+        const rawYears = filterData.birth_years || [];
+
+        this.genders = [...new Set(rawGenders.map(g => (g ?? '').toString().trim()))].filter(Boolean);
+        const trimmedCountries = rawCountries.map(c => (c ?? '').toString().trim()).filter(Boolean);
+        this.countries = [...new Set(trimmedCountries)];
+        this.experienceGroups = [...new Set(rawExperience.map(e => (e ?? '').toString().trim()))].filter(Boolean);
+        const yearsNum = rawYears.map(y => Number(y)).filter(y => Number.isFinite(y));
+        this.birthYears = [...new Set(yearsNum)].sort((a,b) => a - b);
+        this.prefillQueryText = decodeURIComponent(this.$route.query.q || '');
+      } catch (err) {
+        console.error("Failed to load filters.json", err);
+      } finally {
+        this.loading = false;
+      }
     },
     async onSearchFormSubmitted(formData) {
       this.searched = true;
